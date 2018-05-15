@@ -253,7 +253,7 @@ class DatasetAugmenter:
 
 		file_name = self.coco.imgs[image_id]['file_name']
 		out_path = os.path.join(self.augmented_path, file_name)
-		target_image.save(out_path)
+		target_image.save(out_path, quality=98)
 
 	def save_augmented_dataset(self):
 		with open(self.augmented_ann_file, 'w') as output_file:
@@ -264,28 +264,32 @@ class DatasetAugmenter:
 		num_images = len(self.coco.dataset['images'])
 		obj_counter = 0
 		for idx, coco_image in enumerate(self.coco.dataset['images']):
+			image_got_augmented = False
+			target_image = self.get_pil_image(image_id=coco_image['id'])
 			# loop over annotations for image
 			if idx % 100 == 0:
 				print('Processed {}/{} \t\t number of pastes: {}'.format(num_images, idx, obj_counter*N))
 			for ann in self.coco.imgToAnns[coco_image['id']]:
+				if ann['id'] >= 9e12:
+					break
 				obj = self.get_object(ann_id=ann['id'])
-				self.paste_object(obj)
+				self.paste_object(obj, target_image=target_image)
 				if obj is not None:
 					obj_counter += 1
+					image_got_augmented = True
 				if obj is not None and AUGMENT_ONE_OBJECT_PER_IMAGE:
 					break
+			if not image_got_augmented:  # we keep the image even if it contained no small objects.
+				self.save_augmented_image(target_image, coco_image['id'])
 
 
 def main():
 	dataset = 'val2017'
 	aug = DatasetAugmenter(dataset)
 	plt.ion()
-
 	aug.process_dataset()
-
-	interact(local=locals())
-
 	aug.save_augmented_dataset()
+	interact(local=locals())
 
 
 if __name__ == '__main__':

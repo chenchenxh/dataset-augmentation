@@ -10,6 +10,7 @@ import cv2
 from code import interact
 from random import randint
 from math import cos, sin, radians
+import json
 
 # parameters
 MARGIN = 5  # [px]
@@ -21,6 +22,7 @@ AREA_MIN = 0  # [px^2]
 BLUR_FILTER_SIZE = 5  # [px]
 BLUR_EDGES = False
 N = 5  # number of pastes
+AUGMENT_ONE_OBJECT_PER_IMAGE = True  # if there are more small objects on an image, we only augment one
 
 class SegmentedObject:
 
@@ -42,6 +44,7 @@ class SegmentedObject:
 class DatasetAugmenter:
 	def __init__(self, dataset):
 		self.ann_file = './annotations/instances_{}.json'.format(dataset)
+		self.augmented_ann_file = './annotations/instances_{}_augmented.json'.format(dataset)
 		
 		self.dataset_path = './{}/'.format(dataset)
 		self.augmented_path = './{}_augmented/'.format(dataset)
@@ -49,7 +52,7 @@ class DatasetAugmenter:
 			os.makedirs(self.augmented_path)
 
 		self.coco = COCO(self.ann_file)
-		self.object_id = 900000000
+		self.object_id = int(9e12)
 		self.pasted_id_list = []
 
 
@@ -111,10 +114,8 @@ class DatasetAugmenter:
 		ann = self.coco.anns[ann_id]
 
 		if len(ann['segmentation']) > 1:
-			print('Ignoring disjoint object.')
 			return None
 		if ann['area'] < AREA_MIN or ann['area'] > AREA_MAX:
-			print('Area outside limits [{}, {}]'.format(AREA_MIN, AREA_MAX))
 			return None
 
 		if image_id is None:
@@ -254,22 +255,38 @@ class DatasetAugmenter:
 		out_path = os.path.join(self.augmented_path, file_name)
 		target_image.save(out_path)
 
+	def save_augmented_dataset(self):
+		with open(self.augmented_ann_file, 'w') as output_file:
+			json.dump(self.coco.dataset, output_file)
+
+	def process_dataset(self):
+		# loop over all images in dataset
+		num_images = len(self.coco.dataset['images'])
+		obj_counter = 0
+		for idx, coco_image in enumerate(self.coco.dataset['images']):
+			# loop over annotations for image
+			if idx % 100 == 0:
+				print('Processed {}/{} \t\t number of pastes: {}'.format(num_images, idx, obj_counter*N))
+			for ann in self.coco.imgToAnns[coco_image['id']]:
+				obj = self.get_object(ann_id=ann['id'])
+				self.paste_object(obj)
+				if obj is not None:
+					obj_counter += 1
+				if obj is not None and AUGMENT_ONE_OBJECT_PER_IMAGE:
+					break
+
 
 def main():
 	dataset = 'val2017'
 	aug = DatasetAugmenter(dataset)
 	plt.ion()
 
-	anns = aug.coco.dataset['annotations'][1000:1100]
-	for ann in anns:
-		obj = aug.get_object(ann_id=ann['id'])
-		aug.paste_object(obj, n=10)
+	aug.process_dataset()
 
 	interact(local=locals())
-	
-	obj = aug.get_object(ann_id=12582)
-	if obj is not None:
-		aug.paste_object(obj, n=50)
-	
+
+	aug.save_augmented_dataset()
+
+
 if __name__ == '__main__':
 	main()

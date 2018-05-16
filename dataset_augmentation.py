@@ -17,7 +17,7 @@ MARGIN = 5  # [px]
 ANGLE = 15  # [+/- deg]
 SCALE = 20  # [+/- %]
 ALLOW_DISJOINT_OBJECTS = False
-AREA_MAX = 1000  # [px^2]
+AREA_MAX = 1024  # [px^2]
 AREA_MIN = 0  # [px^2]
 BLUR_FILTER_SIZE = 5  # [px]
 BLUR_EDGES = False
@@ -67,7 +67,11 @@ class DatasetAugmenter:
 		elif image_id is not None:
 			file_name = self.coco.imgs[image_id]['file_name']
 		if file_name is not None:
-			img = Image.open(os.path.join(self.dataset_path, file_name))
+			if os.path.exists(os.path.join(self.augmented_path, file_name)):
+				# if we augmented it already, continue pasting on that image
+				img = Image.open(os.path.join(self.augmented_path, file_name))
+			else:
+				img = Image.open(os.path.join(self.dataset_path, file_name))
 			return img
 
 
@@ -105,7 +109,13 @@ class DatasetAugmenter:
 			cropped_with_margins = padded_image.crop(box=(xmin, ymin, xmax, ymax))
 			return cropped_with_margins
 
-
+	def binary_mask_from_polygons(self, polygons, width, height):
+		rle = mask_util.frPyObjects(polygons, height, width)  # Run-Length Encoding
+		decoded = mask_util.decode(rle)
+		if decoded.ndim == 3:	# disjoint object, multiple outline polygons on different channels
+			decoded = np.amax(decoded, 2)	# flattening by taking max along channels
+		mask = np.squeeze(decoded).transpose()  # binary mask
+		return mask
 	
 	def get_object(self, ann_id, image_id=None):
 
@@ -125,11 +135,7 @@ class DatasetAugmenter:
 
 
 		polygons = ann['segmentation']
-		rle = mask_util.frPyObjects(polygons, img.height, img.width)  # Run-Length Encoding
-		decoded = mask_util.decode(rle)
-		if decoded.ndim == 3:	# disjoint object, multiple outline polygons on different channels
-			decoded = np.amax(decoded, 2)	# flattening by taking max along channels
-		mask = np.squeeze(decoded).transpose()  # binary mask
+		mask = self.binary_mask_from_polygons(polygons, img.width, img.height)
 		mask_crop, origin_x, origin_y = self.crop_bbox_simple(mask, ann['bbox'], margin=MARGIN)
 		img_crop = self.crop_bbox_simple(img, ann['bbox'], margin=MARGIN)
 
@@ -232,35 +238,69 @@ class DatasetAugmenter:
 
 		anns = []
 		for i in range(n):
-			obj_img = obj.image
-			mask_img = Image.fromarray(obj.mask.transpose()*255)
+			overlap = True
+			paste_trials = 0
+			while overlap:
+				if paste_trials > 20:
+					break
+				obj_img = obj.image
+				mask_img = Image.fromarray(obj.mask.transpose()*255)
 
-			paste_param = self.get_paste_parameters(target_image, obj_img)
+				paste_param = self.get_paste_parameters(target_image, obj_img)
 
-			# image transformation
-			obj_img = obj_img.rotate(paste_param['angle'], resample=Image.BICUBIC, expand=False)
-			mask_img = mask_img.rotate(paste_param['angle'], resample=Image.BICUBIC, expand=False)
+				# image transformation
+				obj_img = obj_img.rotate(paste_param['angle'], resample=Image.BICUBIC, expand=False)
+				mask_img = mask_img.rotate(paste_param['angle'], resample=Image.BICUBIC, expand=False)
 
-			new_size = (np.array(obj_img.size) * paste_param['scale']).astype(np.int)
-			obj_img = obj_img.resize(new_size, resample=Image.BICUBIC)
-			mask_img = mask_img.resize(new_size, resample=Image.BICUBIC)
+				new_size = (np.array(obj_img.size) * paste_param['scale']).astype(np.int)
+				obj_img = obj_img.resize(new_size, resample=Image.BICUBIC)
+				mask_img = mask_img.resize(new_size, resample=Image.BICUBIC)
 
-			if BLUR_EDGES:
-				mask_img = Image.fromarray(cv2.blur(np.array(mask_img), (BLUR_FILTER_SIZE, BLUR_FILTER_SIZE)))
+				overlap = self.check_overlap(obj.source_image_id, mask_img, paste_param)
+				if overlap:
+					paste_trials += 1
+					continue
 
+				if BLUR_EDGES:
+					mask_img = Image.fromarray(cv2.blur(np.array(mask_img), (BLUR_FILTER_SIZE, BLUR_FILTER_SIZE)))
 
-			target_image.paste(obj_img, box=(paste_param['x'], paste_param['y']), mask=mask_img)
-			ann = self.create_new_ann(obj, target_image, paste_param)
+				target_image.paste(obj_img, box=(paste_param['x'], paste_param['y']), mask=mask_img)
+				ann = self.create_new_ann(obj, target_image, paste_param)
+			#target_image.show()
 
 		self.save_augmented_image(target_image, obj.source_image_id)
 
 		# target_image.save('debug_img.jpg')
 		# self.show_ann_on_image(self.pasted_id_list, img=target_image)
 
+	def get_occupancy_image(self, image_id):
+		anns = self.coco.imgToAnns[image_id]
+		image = self.coco.imgs[image_id]
+		occupancy_image = np.zeros([image['width'], image['height']])
+
+		for ann in anns:
+			mask = self.binary_mask_from_polygons(ann['segmentation'], image['width'], image['height'])
+			occupancy_image = np.amax(np.stack([mask, occupancy_image], axis=2), axis=2)
+
+		return occupancy_image
+
+	def check_overlap(self, image_id, mask_img, paste_param):
+		occupancy_image = self.get_occupancy_image(image_id)
+		mask = np.array(mask_img).transpose()/255.0
+		placed_mask = np.zeros(occupancy_image.shape)
+		placed_mask[paste_param['x']:paste_param['x']+mask.shape[0],
+					paste_param['y']:paste_param['y']+mask.shape[1]] = mask
+
+		pasted = occupancy_image + placed_mask
+
+		img = Image.fromarray(np.uint8(pasted.transpose()*100))
+		#img.show()
+
+		return np.max(pasted) > 1.0
+
 	def save_augmented_image(self, target_image, image_id):
 
 		""" Save image to dir of augmented images. """
-
 		file_name = self.coco.imgs[image_id]['file_name']
 		out_path = os.path.join(self.augmented_path, file_name)
 		target_image.save(out_path, quality=98)

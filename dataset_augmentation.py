@@ -176,16 +176,18 @@ class DatasetAugmenter:
 	def create_new_ann(self, obj, target_image, paste_param):
 		source_ann = obj.original_annotation
 		transformed_polys = []
+		transformed_np_polys = np.empty([0, 2])
 		for p in obj.poly:
 			poly = self.transform_polygon(paste_param, p, obj)
 			transformed_polys.append(poly.reshape(-1).tolist())
+			transformed_np_polys = np.vstack([transformed_np_polys, poly])
 		new_ann = dict()
 		new_ann.update({'image_id': source_ann['image_id'],
 						'area': source_ann['area']*paste_param['scale']*paste_param['scale'],
 						'iscrowd': source_ann['iscrowd'],
 						'category_id': source_ann['category_id'],
 						'id': self.object_id,
-						'bbox': [0, 0, 1, 1], # TODO
+						'bbox': self.get_bbox_from_poly(transformed_np_polys),
 						'segmentation': transformed_polys})
 		self.pasted_id_list.append(self.object_id)
 		self.object_id += 1
@@ -209,6 +211,14 @@ class DatasetAugmenter:
 		scaled_poly = shift_back_poly * np.array([param['scale'], param['scale']])
 		pasted_poly = scaled_poly + np.array([param['x'], param['y']])
 		return pasted_poly
+
+	def get_bbox_from_poly(self, poly):
+
+		""" Get x and y extremes from polygon that has form [[x1, y1], [x2, y2], ...] """
+
+		xmin, ymin = np.min(poly, axis=0)
+		xmax, ymax = np.max(poly, axis=0)
+		return [xmin, ymin, xmax, ymax]
 
 	def paste_object(self, obj, n=N, target_image=None):
 

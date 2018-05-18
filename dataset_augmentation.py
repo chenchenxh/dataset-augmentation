@@ -10,6 +10,7 @@ import cv2
 from code import interact
 from random import randint
 from math import cos, sin, radians
+from datetime import datetime
 import json
 
 # parameters
@@ -21,8 +22,8 @@ AREA_MAX = 1024  # [px^2]
 AREA_MIN = 0  # [px^2]
 BLUR_FILTER_SIZE = 5  # [px]
 BLUR_EDGES = False
-N = 5  # number of pastes
-AUGMENT_ONE_OBJECT_PER_IMAGE = True  # if there are more small objects on an image, we only augment one
+N = 3  # number of pastes
+AUGMENT_ONE_OBJECT_PER_IMAGE = False  # if there are more small objects on an image, we only augment one
 
 class SegmentedObject:
 
@@ -241,7 +242,7 @@ class DatasetAugmenter:
 			overlap = True
 			paste_trials = 0
 			while overlap:
-				if paste_trials > 20:
+				if paste_trials > 10:
 					break
 				obj_img = obj.image
 				mask_img = Image.fromarray(obj.mask.transpose()*255)
@@ -311,6 +312,7 @@ class DatasetAugmenter:
 
 	def process_dataset(self):
 		# loop over all images in dataset
+		start = datetime.now()
 		num_images = len(self.coco.dataset['images'])
 		obj_counter = 0
 		for idx, coco_image in enumerate(self.coco.dataset['images']):
@@ -318,7 +320,8 @@ class DatasetAugmenter:
 			target_image = self.get_pil_image(image_id=coco_image['id'])
 			# loop over annotations for image
 			if idx % 100 == 0:
-				print('Processed {}/{} \t\t number of pastes: {}'.format(num_images, idx, obj_counter*N))
+				now = datetime.now()
+				print('[{}:{}:{}] Processed {}/{} \t\t number of pastes: {}'.format(now.hour, now.minute, now.second, num_images, idx, obj_counter*N))
 			for ann in self.coco.imgToAnns[coco_image['id']]:
 				if ann['id'] >= 9e12:
 					break
@@ -331,6 +334,9 @@ class DatasetAugmenter:
 					break
 			if not image_got_augmented:  # we keep the image even if it contained no small objects.
 				self.save_augmented_image(target_image, coco_image['id'])
+		end = datetime.now()
+		duration = end-start
+		print('Dataset augmentation took {} seconds'.format(duration.seconds))
 
 
 def main():

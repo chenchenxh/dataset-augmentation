@@ -174,8 +174,8 @@ class DatasetAugmenter:
 		angle = randint(-ANGLE, ANGLE)
 		scale = randint(100-SCALE, 100+SCALE)/100.0
 		# margin is too big at the moment, might calculate better placement parameters from mask
-		max_x_pos = target_image.width - int(scale * obj_img.width + MARGIN)
-		max_y_pos = target_image.height - int(scale * obj_img.height + MARGIN)
+		max_x_pos = max(0, target_image.width - int(scale * obj_img.width + MARGIN))
+		max_y_pos = max(0, target_image.height - int(scale * obj_img.height + MARGIN))
 		x = randint(0, max_x_pos)
 		y = randint(0, max_y_pos)
 		return {'x': x, 'y': y, 'angle': angle, 'scale': scale}

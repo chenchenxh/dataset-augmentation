@@ -322,18 +322,23 @@ class DatasetAugmenter:
 			if idx % 100 == 0:
 				now = datetime.now()
 				print('[{}:{}:{}] Processed {}/{} \t\t number of pastes: {}'.format(now.hour, now.minute, now.second, num_images, idx, obj_counter*N))
-			for ann in self.coco.imgToAnns[coco_image['id']]:
-				if ann['id'] >= 9e12:
-					break
-				obj = self.get_object(ann_id=ann['id'])
-				self.paste_object(obj, target_image=target_image)
-				if obj is not None:
-					obj_counter += 1
-					image_got_augmented = True
-				if obj is not None and AUGMENT_ONE_OBJECT_PER_IMAGE:
-					break
-			if not image_got_augmented:  # we keep the image even if it contained no small objects.
-				self.save_augmented_image(target_image, coco_image['id'])
+			try:
+				for ann in self.coco.imgToAnns[coco_image['id']]:
+					if ann['id'] >= 9e12:
+						break
+					obj = self.get_object(ann_id=ann['id'])
+					self.paste_object(obj, target_image=target_image)
+					if obj is not None:
+						obj_counter += 1
+						image_got_augmented = True
+					if obj is not None and AUGMENT_ONE_OBJECT_PER_IMAGE:
+						break
+			except ValueError:
+				# Todo: log errors to get more information
+				pass
+			finally:
+				if not image_got_augmented:  # we keep the image even if it contained no small objects.
+					self.save_augmented_image(target_image, coco_image['id'])
 		end = datetime.now()
 		duration = end-start
 		print('Dataset augmentation took {} seconds'.format(duration.seconds))
